@@ -1,0 +1,146 @@
+import os
+import json
+import re
+import openai
+import pandas as pd
+import seaborn as sns
+import matplotlib.pyplot as plt
+from typing import Dict
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+
+# === CONFIG ===
+openai.api_key = os.getenv("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")  # Set your key as an environment variable
+base_path = "/Users/nishi_kaura/Desktop/boon"
+md_dir = os.path.join(base_path, "markdown")
+tms_dir = os.path.join(base_path, "tms")
+fields_to_compare = [
+    "blnum", "pickup_company", "pickup_address", "delivery_company",
+    "delivery_address", "miles", "weight", "linehaul_rate", "accessorials",
+    "total_rate", "pickup_ref", "delivery_ref"
+]
+
+# === UTILITIES ===
+def normalize_with_gpt(text):
+    try:
+        prompt = f"""You are a data transformation assistant aligning extracted logistics data with database schema. 
+Normalize the following value for comparison. If it's a company or address, return only the cleaned name or address in standard format. 
+If it's a numeric field, normalize decimals and remove special characters. 
+
+Raw Value:
+{text}
+Normalized:"""
+        response = openai.ChatCompletion.create(
+            model="gpt-4",
+            messages=[{"role": "user", "content": prompt}]
+        )
+        return response['choices'][0]['message']['content'].strip()
+    except Exception as e:
+        print("OpenAI Error:", e)
+        return text
+
+def load_tms_data(path: str) -> Dict:
+    with open(path, "r") as f:
+        return json.load(f)
+
+def extract_fields_from_markdown(md_text: str) -> Dict:
+    text = " ".join(md_text.splitlines())
+    def search(pattern): match = re.search(pattern, text); return match.group(1).strip() if match else ""
+    return {
+        "blnum": search(r"Load\s*#:.*?(\S+)"),
+        "pickup_company": search(r"Pick.*?:\s*(.*?)\s*Earliest"),
+        "pickup_address": search(r"Pick.*?Earliest.*?(\d+\s+\S+.*?)\s+Latest"),
+        "delivery_company": search(r"Drop.*?:\s*(.*?)\s*Earliest"),
+        "delivery_address": search(r"Drop.*?Earliest.*?(\d+\s+\S+.*?)\s+Latest"),
+        "miles": search(r"Miles:\s*(\d+)"),
+        "weight": search(r"Weight:\s*(\d+)"),
+        "linehaul_rate": search(r"Line Haul Rate:\s*\$(\d+\.?\d*)"),
+        "accessorials": search(r"Accessorials:\s*\$(\d+\.?\d*)"),
+        "total_rate": search(r"Total Rate USED:\s*\$(\d+\.?\d*)"),
+        "pickup_ref": search(r"Pickup Ref.*?:.*?(\d+)"),
+        "delivery_ref": search(r"Delivery Ref.*?:.*?(\d+)")
+    }
+
+def extract_tms_fields(tms: Dict) -> Dict:
+    def safe_get_ref(tms, stop_index, key):
+        try:
+            return tms["stops"][stop_index].get("referenceNumbers", [{}])[0].get(key, "")
+        except (IndexError, TypeError):
+            return ""
+
+    return {
+        "blnum": tms.get("blnum", ""),
+        "pickup_company": tms["stops"][0].get("location_name", ""),
+        "pickup_address": f'{tms["stops"][0].get("address", "")}, {tms["stops"][0].get("city_name", "")}, {tms["stops"][0].get("state", "")} {tms["stops"][0].get("zip_code", "")}',
+        "delivery_company": tms["stops"][1].get("location_name", ""),
+        "delivery_address": f'{tms["stops"][1].get("address", "")}, {tms["stops"][1].get("city_name", "")}, {tms["stops"][1].get("state", "")} {tms["stops"][1].get("zip_code", "")}',
+        "miles": str(tms.get("billing_loaded_distance", "")),
+        "weight": str(safe_get_ref(tms, 0, "weight")),
+        "linehaul_rate": str(tms.get("freight_charge", "")),
+        "accessorials": str(tms.get("otherchargetotal", "")),
+        "total_rate": str(tms.get("total_charge", "")),
+        "pickup_ref": safe_get_ref(tms, 0, "reference_number"),
+        "delivery_ref": safe_get_ref(tms, 1, "reference_number")
+    }
+
+
+def cosine_match(text1, text2, threshold=0.85):
+    vect = TfidfVectorizer().fit_transform([text1, text2])
+    sim = cosine_similarity(vect[0:1], vect[1:2])
+    return sim[0][0] >= threshold
+
+# === CORE EVALUATION ===
+def evaluate_fields(extracted_fields, tms_fields, fields):
+    logs = []
+    for key in fields:
+        e_val = normalize_with_gpt(str(extracted_fields.get(key, "")).strip().lower())
+        t_val = normalize_with_gpt(str(tms_fields.get(key, "")).strip().lower())
+        label = "FP"
+
+        if e_val == t_val:
+            label = "TP"
+        elif key in ["pickup_company", "delivery_company"]:
+            # Soft match if address matches
+            addr_key = "pickup_address" if "pickup" in key else "delivery_address"
+            e_addr = normalize_with_gpt(str(extracted_fields.get(addr_key, "")))
+            t_addr = normalize_with_gpt(str(tms_fields.get(addr_key, "")))
+            if e_addr == t_addr or cosine_match(e_addr, t_addr):
+                label = "TP"
+        elif key in ["weight", "miles", "linehaul_rate", "accessorials", "total_rate"]:
+            try:
+                if abs(float(e_val.replace(",", "")) - float(t_val.replace(",", ""))) < 1e-2:
+                    label = "TP"
+            except:
+                pass
+
+        logs.append((key, e_val, t_val, label))
+    return logs
+
+# === MAIN LOOP ===
+confusion_matrix = []
+for filename in os.listdir(tms_dir):
+    if filename.endswith(".json"):
+        base_filename = filename.replace("_tms", "").replace(".json", "")
+        tms_path = os.path.join(tms_dir, filename)
+        md_path = os.path.join(md_dir, base_filename + ".md")
+
+        if os.path.exists(md_path):
+            with open(md_path, "r") as f: md_text = f.read()
+            tms_json = load_tms_data(tms_path)
+            extracted_fields = extract_fields_from_markdown(md_text)
+            tms_fields = extract_tms_fields(tms_json)
+            confusion_matrix.extend(evaluate_fields(extracted_fields, tms_fields, fields_to_compare))
+
+# === OUTPUT VISUAL ===
+df = pd.DataFrame(confusion_matrix, columns=["Field", "Extracted", "TMS", "Result"])
+df.to_csv("comparison_debug_log.csv", index=False)
+
+import seaborn as sns
+heatmap_data = pd.crosstab(index=df["Field"], columns=df["Result"])
+plt.figure(figsize=(12, 8))
+sns.heatmap(heatmap_data, annot=True, cmap="Blues", fmt="d")
+plt.title("Confusion Matrix by Field")
+plt.ylabel("Field")
+plt.xlabel("Label")
+plt.tight_layout()
+plt.show()
