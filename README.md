@@ -21,15 +21,6 @@ Tackle the **Document Processing and Entity Mapping** challenge. It compares str
 - **Error Logging:** Logged missing fields, low-confidence matches, and mismatches
 - **Evaluation:** Output includes a CSV debug log and a seaborn-based heatmap
 
----
 
-## 📊 Results (Simulated)
-
-- **Avg. Name Match Score:** 0.86  
-- **Matching Accuracy:** 92%  
-- **Processed Docs:** 100%  
-- **Error Flag Rate:** <5%
-
----
 
 
