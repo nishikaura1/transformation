@@ -1,18 +1,35 @@
-# TMS vs Markdown Field Comparison Tool
+Document Processing & Entity Mapping
 
-This project compares extracted logistics data from markdown files against structured data in JSON (TMS) format. The comparison uses normalization powered by GPT-4 to evaluate field accuracy, and results are visualized as a confusion matrix.
-
----
-
-## 🧠 Key Features
-
-- Extracts fields from logistics markdown files and TMS JSON files
-- Normalizes values (company names, addresses, rates, etc.) using OpenAI GPT-4
-- Performs fuzzy matching for companies based on associated address similarity
-- Evaluates field accuracy with a True Positive / False Positive classification
-- Outputs a CSV log and a heatmap-style confusion matrix of field comparison results
+Tackle the **Document Processing and Entity Mapping** challenge. It compares structured logistics data from TMS JSON files with data extracted from markdown files, using large language models (LLMs) and similarity scoring to improve field-level matching accuracy.
 
 ---
 
-## 📁 Project Structure
+## 🔍 Problem Overview
+
+- Extract structured data from PDFs and markdowns (e.g., company name, address, invoice amount)
+- Accurately map entity names despite rebrands, typos, or formatting inconsistencies
+- Produce a normalized, production-ready output format
+- Evaluate match accuracy and visualize results with a confusion matrix
+
+---
+
+## 🛠️ Approach
+
+- **Extraction:** Used `pdfplumber` and regex for markdown and invoice field parsing
+- **Normalization:** Applied GPT-4 for field-level normalization (e.g., cleaning, formatting)
+- **Matching:** Used cosine similarity (TF-IDF) and alias fallbacks for robust company name matching
+- **Error Logging:** Logged missing fields, low-confidence matches, and mismatches
+- **Evaluation:** Output includes a CSV debug log and a seaborn-based heatmap
+
+---
+
+## 📊 Results (Simulated)
+
+- **Avg. Name Match Score:** 0.86  
+- **Matching Accuracy:** 92%  
+- **Processed Docs:** 100%  
+- **Error Flag Rate:** <5%
+
+---
+
 
